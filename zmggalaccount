@@ -1,0 +1,96 @@
+#!/bin/bash
+# This script will get all the gal account available in the server.
+
+#Check to run with the zimbra user only.
+if [ "$(whoami)" != "zimbra" ]; then
+        echo "Script must be run as user: zimbra"
+        exit 
+	fi
+
+#Function to call variable.
+my_var(){
+	#Sourcing the zimbra system variables.
+	source ~/bin/zmshutil ; zmsetvars;
+	LDAP_MASTER_URL="$(echo $ldap_master_url | cut -d' ' -f1)"
+	SEARCH="ldapsearch -x -H $LDAP_MASTER_URL -D $zimbra_ldap_userdn -w $zimbra_ldap_password -LLL"
+	OBJCLASS='(objectClass=zimbraDomain)'
+}
+
+# Function which define the help content.
+usage(){
+	echo "Usage:"
+	echo "-h HELP :to get this output"
+	echo "-s SERVERNAME: to get all the GAL account in the serevr "
+	echo "-d DOMAINNAME: to get the GAL account of a domain"
+		exit
+}
+
+# Function to get the GAL account on the basis of serverName provided.
+GALaccount_server() {
+	my_var # This is calling the my defined variables function.  
+	#Checking if the entered server really exist on the server. 
+	CHKSERVER=$( $SEARCH '(objectClass=zimbraServer)' zimbraServiceHostname | grep zimbraServiceHostname | awk '{print $2}'| grep $SNAME | wc -l )
+	S_NAME='(zimbraMailHost='$SNAME')'
+		# This function will return all the GAL account in the server
+		if [ "$CHKSERVER" -ne 0 ]; then
+			SID="$($SEARCH $OBJCLASS |grep -w "zimbraGalAccountId:" | awk '{print $2}')"
+			for ID in $(echo $SID); do
+				ZMGALACC=$($SEARCH "(&(zimbraId=$ID)$S_NAME)" mail | grep -w "mail:" | awk '{print $2}');
+				DNAME="$($SEARCH "(zimbraGalAccountId=$ID)" zimbraDomainName| grep zimbraDomainName | awk '{print $2}')";
+				if [ ! -z $ZMGALACC ]; then 
+					echo "$ZMGALACC"
+				else 
+					echo ""
+					echo "================================================================================"
+					echo "Error!: Attribute zimbraGalAccountId of domain $DNAME references an invalid account ID: $ID"
+					echo "Remove the following ID from the domain configuration:"
+					echo "zmprov md $DNAME -zimbraGalAccountId \" $ID\" "
+					echo "Please run the command only when you sure what you are doing. "
+					echo "================================================================================"
+					echo ""
+				fi
+				done
+			exit
+		else 
+			echo "Please enter the valid Server Name"
+		fi
+}
+
+GALaccount_domain() {
+	my_var #This will call the my defined variables. 
+	# Checking if the input domain really exist.
+	CHKDOMAIN=$($SEARCH | grep -w "zimbraDomainName:" | awk '{print $2}'|grep $DOMAIN| wc -l )
+		if [ $CHKDOMAIN -ne 0 ]; then  
+			#This function will return all the GAL account of a domain.		
+			DNAME='(zimbraDomainName='$DOMAIN')';
+			Z_ID=$($SEARCH "(&$OBJCLASS$DNAME)" | grep -w "zimbraGalAccountId:" | awk '{print $2}')
+				for ID in $(echo $Z_ID); do 
+					ZMGALACC=$($SEARCH "(zimbraId=$ID)" mail | grep -w "mail:" | awk '{print $2}');
+					echo "$ZMGALACC"
+					done 
+			exit
+
+		  else 
+		  	echo "Please enter the valid name domain name"
+			exit 
+		fi	
+}
+
+# Main function 
+# If the script didn't got any argument then it will call the usage function to guide to provide the arguments.
+if [ $# = 0 ]; then
+  usage
+fi
+
+#Getting the input 
+while getopts "s:d:h:" input; do
+  case $input in
+	h) usage ; exit ;;
+	s) SNAME=$OPTARG;
+	   GALaccount_server ;
+	   exit ;;
+	d) DOMAIN=$OPTARG ;
+	   GALaccount_domain ; 
+	   exit ;;
+  esac
+done

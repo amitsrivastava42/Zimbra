@@ -1,2 +1,2 @@
 # Zimbra
-The script available here helps to fix issue related the to the zimbra. 
+The script available here helps to fix issue related to the zimbra. 

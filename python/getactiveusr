@@ -1,0 +1,67 @@
+#!/usr/bin/python
+import subprocess
+import paramiko
+import getpass
+import time
+import re
+
+def ldapsearch(ldap_search_filter):
+    '''
+    Performs an ldap search and returns a list of COS name and ID
+    '''
+    # Fetch variables from localconfig (LC)
+    ldap_urls_LC = subprocess.Popen(['zmlocalconfig', 'ldap_url'],
+                                    stdout=subprocess.PIPE)
+    ldap_zmdn_LC = subprocess.Popen(['zmlocalconfig', 'zimbra_ldap_userdn'],
+                                    stdout=subprocess.PIPE)
+    ldap_pass_LC = subprocess.Popen(['zmlocalconfig',
+                                     '-s', 'zimbra_ldap_password'],
+                                    stdout=subprocess.PIPE)
+
+    # Convert them to a useable string
+    ldap_hostname = ldap_urls_LC.stdout.read().split()[2]
+    zimbra_ldap_userdn = ldap_zmdn_LC.stdout.read().split()[2]
+    zimbra_ldap_password = ldap_pass_LC.stdout.read().split()[2]
+
+    # Saving the output from ldap
+    ldap_dump = subprocess.Popen(['ldapsearch', '-x', '-LLL',
+                                  '-H', ldap_hostname,
+                                  '-D', zimbra_ldap_userdn,
+                                  '-w', zimbra_ldap_password,
+                                  ldap_search_filter, 'zimbraServiceHostname'],
+                                 stdout=subprocess.PIPE).stdout.read()
+
+    # grepping and extracting servernames from ldap dump
+    server_regex = re.compile(r'zimbraServiceHostname: (.*)')
+    server_ids = []
+    for line in ldap_dump.split('\n'):
+        if re.search('^zimbraServiceHostname:', line):
+            server_ids.append(server_regex.search(line).group(1))
+
+    return server_ids[0]
+
+#def switch_zimbra():
+    switch_user = subprocess.call(["/usr/bin/sudo", "su", "-", "zimbra", "-c", server_names])
+    #server_names = switch_user.stdout.read()
+    print switch_user
+
+def connect_remote(zcs_server_name):
+    remote = paramiko.client.SSHClient()
+    remote.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    remote.connect(zcs_server_name, allow_agent=True)
+    remote_sudo_pass = getpass.getpass("sudo password for %s: " % zcs_server_name)
+    command = "sudo su - zimbra -c \"zmhostname\""
+    remote_tunnel = ssh_client_shell()
+    remote_tunnel.send(command)
+
+
+def main():
+    #ldapsearch("(&(objectClass=zimbraServer)(zimbraServiceEnabled=mailbox))")
+    remote_server = raw_input("Please input the server name in the format like md01.armstrong.synacor.com: ")
+    connect_remote(remote_server)
+    filter = '''(&(objectClass=zimbraServer)
+                (zimbraServiceEnabled=mailbox))'''
+    server_names = ldapsearch(filter)
+    print server_names
+
+main()

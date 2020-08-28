@@ -1,0 +1,46 @@
+#!/bin/python
+import os
+import sys
+import platform
+
+# Make sure this script get executed as root user only
+if os.getuid() != 0:
+    exit("Please run this script as ROOT user")
+
+
+# Function to get the OS detail.
+def getosinfo():
+    """ Get the os detail """
+    osdetail = platform.platform()
+    arch = osdetail.split("-")[-5]
+    os = osdetail.split("-")[-3]
+    version = osdetail.split("-")[-2]
+    version_major = version.split(".")[0]
+
+# Checking the Os type
+    if os == "centos" or os == "redhat" and version_major == "6":
+        onrpmbase6()
+    elif os == "centos" or os == "redhat" and version_major == "7" :
+        onrpmbase7()
+    elif os == "Ubuntu" :
+        ondebbase()
+    else:
+        print "Unable to determine the OS"
+
+# Function to perform actions if its centos/rhel
+def onrpmbase6():
+    print "rpm base structure"
+
+def onrpmbase7():
+    print "rpm base structure"
+
+def ondebbase():
+    print "debian base structure"
+
+def main():
+    os = getosinfo()
+    #print os
+
+if __name__ == '__main__':
+    main()
+

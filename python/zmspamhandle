@@ -1,0 +1,93 @@
+#!/usr/bin/python
+
+# This script is intended to handle the spam related issue. 
+# It will handle respectively the incoming and outgoing spam. 
+
+import os
+import subprocess
+
+print ("Hello Word this is my first python script.")
+
+QSTATMSG = "Following is the present queue status"
+CHECKQ = subprocess.call("/opt/zimbra/libexec/zmqstat")
+
+print(QSTATMSG)
+print CHECKQ
+
+"""
+With the following command I checked what all IP's were making how many connections 
+
+cat /var/log/zimbra.log | grep -Eo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}'| sort | uniq -c | sort -nr 
+ 439416 84.38.130.206
+19884 192.168.1.246
+11587 192.168.5.1
+2723 192.168.5.246
+
+You have already identified the ip "84.38.130.206" while seeing in the firewall and mark the REJECT of the email form that IP, For that I checked the following configuration. 
+
+su - zimbra
+zmprov gacf zimbraMtaRestriction
+zimbraMtaRestriction: check_client_access lmdb:/opt/zimbra/conf/postfix_blacklist
+zimbraMtaRestriction: check_client_access lmdb:/opt/zimbra/conf/postfix_rbl_override
+strings /opt/zimbra/conf/postfix_blacklist.lmdb 
+84.38.130.206
+REJECT
+
+While reviewing the configuration I came to know that accidently RBL configuration was misplaced while adding the above configuration by you. We immediately added the following RBL
+
+zmprov mcf +zimbraMtaRestriction "reject_rbl_client zen.spamhaus.org"
+zmprov mcf +zimbraMtaRestriction "reject_rbl_client b.barracudacentral.org"
+zmprov mcf +zimbraMtaRestriction "reject_rbl_client bl.spamcop.net"
+
+I've tried  to check the queue so that for all MAILER-DAEMON email I can put them onto hold queue so that you can review them later and delete.
+
+/opt/zimbra/postfix/sbin/postqueue -p | head
+
+74A443D43D43*   21733 Wed Aug 30 12:29:15  MAILER-DAEMON
+                                         aakashsngh7@gmail.com
+
+A614D3D43CCF*   21745 Wed Aug 30 12:29:43  MAILER-DAEMON
+                                         sadhana.ghosh@yahoo.com
+
+781443D4364F*   21751 Wed Aug 30 12:25:16  MAILER-DAEMON
+                                         carl2581072@yahoo.com.cn
+
+5C72C3D44438*   21721 Wed Aug 30 12:36:53  MAILER-DAEMON
+                                         ejaz05189@gmail.com
+
+With the following command I put all the MAILER-DAEMON email on hold please check them and you can delete them. 
+
+/opt/zimbra/postfix/sbin/postqueue -p | awk 'BEGIN { RS = "" } { if ($7 == "MAILER-DAEMON" ) print $1 }' | tr -d '!*' | /opt/zimbra/postfix/sbin/postsuper -h -
+
+As soon I put those email on hold your queue look like the following and now emails are getting deliverd properly. 
+
+[root@icgeb ~]# /opt/zimbra/libexec/zmqstat 
+hold=43464
+corrupt=0
+deferred=0
+active=0
+incoming=0
+
+I also check the possibility of account getting compromised for the outgoing spam and found one user for whom I reset the password and restart the MTA service. 
+
+[root@icgeb ~]# cat /var/log/zimbra.log | sed -n 's/.*sasl_username=//p' | sort | uniq -c | sort -nr 
+ 132980 abdulhasan@icgeb.res.in
+     10 sprawat
+
+su - zimbra 
+zmprov sp abdulhasan@icgeb.res.in 4Vh$J23np
+zmmtactl restart
+
+I checked the zimbraMtaMyNetworks configuration and I found the following 
+su - zimbra 
+zmprov gs `zmhostname` zimbraMtaMyNetworks
+zimbraMtaMyNetworks: 127.0.0.0/8 192.168.5.0/24 192.168.1.0/24 192.168.6.0/24 192.168.7.0/24 
+
+Here you have allowed the completed network of 3 subnets which is not at all required here. You need to have the IP of the server only in the setting and IP of the server which specifically you are trying to relay via your server. And to modify that you can the run the command as following. 
+
+zmprov ms `zmhostname` zimbraMtaMyNetworks "127.0.0.0/8 192.168.5.246/32"
+
+To improve your Anti-spam-system you can refer the following wiki and implement the things according to your need. 
+
+https://wiki.zimbra.com/wiki/Improving_Anti-spam_system
+"""

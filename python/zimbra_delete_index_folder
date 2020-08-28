@@ -1,0 +1,197 @@
+#!/usr/bin/python
+
+import subprocess
+import MySQLdb
+import re
+import os
+import logging
+import shutil
+import datetime
+import sys
+import optparse
+
+
+def ldapsearch(ldap_search_filter):
+    '''
+    Performs an ldap search and returns a list with email address
+    '''
+    # Fetch variables from localconfig (LC)
+    ldap_urls_LC = subprocess.Popen(['zmlocalconfig', 'ldap_url'],
+                                    stdout=subprocess.PIPE)
+    ldap_zmdn_LC = subprocess.Popen(['zmlocalconfig', 'zimbra_ldap_userdn'],
+                                    stdout=subprocess.PIPE)
+    ldap_pass_LC = subprocess.Popen(['zmlocalconfig',
+                                     '-s', 'zimbra_ldap_password'],
+                                    stdout=subprocess.PIPE)
+
+    # Convert them to a useable string
+    ldap_hostname = ldap_urls_LC.stdout.read().split()[2]
+    zimbra_ldap_userdn = ldap_zmdn_LC.stdout.read().split()[2]
+    zimbra_ldap_password = ldap_pass_LC.stdout.read().split()[2]
+
+    # Saving the output from ldap
+    ldap_dump = subprocess.Popen(['ldapsearch', '-x', '-LLL',
+                                  '-H', ldap_hostname,
+                                  '-D', zimbra_ldap_userdn,
+                                  '-w', zimbra_ldap_password,
+                                  ldap_search_filter, 'mail'],
+                                 stdout=subprocess.PIPE).stdout.read()
+
+    # grepping and extracting email addresses from ldap dump
+    email_regex = re.compile(r'mail: (.*)')
+    user_ids = []
+    for line in ldap_dump.split('\n'):
+        if re.search('^mail:', line):
+            user_ids.append(email_regex.search(line).group(1))
+
+    return user_ids
+
+
+def db_conn():
+    '''
+    Creates a db connection with mysql/mariadb
+    '''
+    # Set all the zimbra variables needed
+    zimbra_mysql_password_LC = subprocess.Popen(['zmlocalconfig',
+                                                 '-s',
+                                                 'zimbra_mysql_password'],
+                                                stdout=subprocess.PIPE)
+    zimbra_mysql_password = zimbra_mysql_password_LC.stdout.read().split()[2]
+    # Connecting to Zimbra's db
+    db = MySQLdb.connect(host="localhost",
+                         passwd=zimbra_mysql_password,
+                         user="zimbra",
+                         unix_socket="/opt/zimbra/db/mysql.sock")
+    return db
+
+
+def main():
+    desc = '''This script deletes the index folder for all users who haven't logged into
+    their accounts for over a year. It also places these users in a COS created
+    specifically for them. The COS needs to be specified.'''
+
+    parser = optparse.OptionParser(usage='Usage: %prog -c <COS name> <options>',
+                                   description=desc,
+                                   version='%prog version 1.1')
+    parser.add_option('-c', '--cosname',
+                      help='''Use the COS name here. This is the
+                       special COS created only for abandoned users.''',
+                      dest='cos_name',
+                      action='store',
+                      metavar='abandoned_users')
+    parser.add_option('-l', '--logfile',
+                      help='''Log file location. Default is
+                       /opt/zimbra/log/zimbra_delete_index.log''',
+                      dest='log_file',
+                      action='store',
+                      metavar='/tmp/zimbra_delete_index.log',
+                      default='/opt/zimbra/log/zimbra_delete_index.log')
+    parser.add_option('-v', '--verbose',
+                      help='''Log verbosity. Default is 'INFO'. Specifying this
+                       enables 'DEBUG' logging.''',
+                      dest='log_level',
+                      action='store_true',
+                      default=False)
+    (opts, args) = parser.parse_args()
+
+    if not opts.cos_name:
+        sys.exit("Error: Specify a COS name")
+
+    if opts.log_level:
+        log_level = 10
+    else:
+        log_level = 20
+
+    # Enable logging. Change to INFO/DEBUG as necessary
+    log_file = opts.log_file
+    logging.basicConfig(level=log_level,
+                        filename=log_file,
+                        format='%(asctime)s %(levelname)s %(message)s')
+    print "Starting script. Follow %s for details" % log_file
+    # Get zmhostname
+    logging.debug('Getting zmhostname')
+    zmhostname = subprocess.Popen(['zmhostname'],
+                                  stdout=subprocess.PIPE)
+    hostname = zmhostname.stdout.read().rstrip('\n')
+    logging.debug('Hostname is %s' % (hostname))
+
+    # Set cos name
+    cos_name = opts.cos_name
+    # Ldap filter for the search
+    year_ago = datetime.datetime.now() - datetime.timedelta(days=366)
+    year_ago_ldap = year_ago.strftime("%Y%m%d000000")
+    ldap_filter = '''(&(objectClass=zimbraAccount)
+                     (zimbraLastLogonTimestamp<=%sZ)
+                     (zimbraMailHost=%s))''' % (year_ago_ldap, hostname)
+    logging.debug('Ldap search filter is %s' % (ldap_filter))
+
+    # Get mail ids
+    logging.info('Fetching users from ldap')
+    old_users = ldapsearch(ldap_filter)
+    logging.debug('Ldap search done')
+    # Uncomment the following only if necessary. The list can be huge!
+    logging.debug('List of users are %s' % (old_users))
+
+    # Connect to the db
+    logging.debug('Connecting to the db')
+    db = db_conn()
+    cursor = db.cursor()
+    logging.debug('Db connection done')
+
+    # To caclculate size
+    total_size = 0
+    # Get mailbox ids, and delete index folders
+    try:
+        logging.info('Initializing delete operation')
+        for email_id in old_users:
+            logging.debug('Fetching mailbox id for %s from db' % (email_id))
+            cursor.execute(
+                    'select comment, id from zimbra.mailbox where comment=%s',
+                    (email_id))
+            result = cursor.fetchone()
+            logging.debug('"result" is %s' % (result,))
+            if result:
+                logging.debug('User %s has mailbox id %s' % (result))
+                mailbox_id = result[1]
+                parent_folder = mailbox_id >> 12
+                index_folder = '/opt/zimbra/index/%s/%s/index' % (
+                                              parent_folder, mailbox_id)
+                logging.info('User %s has index folder at %s' % (
+                                              result[0], index_folder))
+                if os.path.isdir(index_folder):
+                    logging.info('Folder exists, deleting it')
+                    folder_size = subprocess.Popen(
+                                              ['du', '-s', index_folder],
+                                              stdout=subprocess.PIPE
+                                              ).stdout.read().split()[0]
+                    # Set cos for the user
+                    cos_state = subprocess.Popen(
+                                              ['zmprov', 'sac',
+                                               email_id, cos_name],
+                                              stdout=subprocess.PIPE
+                                              ).stdout.read()
+                    #cos_state = subprocess.check_call(
+                    #                          ['zmprov', 'sac',
+                    #                           email_id, cos_name])
+                    #if cos_state == 0:
+                    logging.info('%s COS changed to %s' % (
+                                               email_id, cos_name))
+                    #else:
+                    #    logging.warn('Could not change cos for %s' % (
+                    #                           email_id))
+                    # Delete directory
+                    shutil.rmtree(index_folder)
+                    total_size += int(folder_size)
+                    logging.debug('Folder size %s, total size %s'
+                                  % (folder_size, total_size))
+    # Close db connections even on early exit
+    finally:
+        print "End of script. We've freed %s bytes" % (total_size)
+        cursor.close()
+        db.close()
+        logging.info("Db connections closed. Total size freed is %s"
+                     % (total_size))
+
+
+if __name__ == '__main__':
+    main()

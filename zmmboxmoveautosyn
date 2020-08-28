@@ -1,0 +1,71 @@
+#!/bin/bash
+
+# Function to call the zimbra_move_mailbox.sh
+chkzmmboxmove() {
+	#This will check if the mailbox move script is available or not on the server. 
+	if [ -f /usr/local/bin/zimbra_move_mailboxes.sh ]; then
+		echo "Found the zimbra_move_mailboxes.sh script"
+	else 
+		echo "File "zimbra_move_mailboxes.sh" Not Found: please contact the Emailops team for that."
+	fi
+}
+
+# Checking if the scripts exists
+# chkzmmboxmove
+
+# Defining variables. 
+# MBOXMOVE="/usr/local/bin/zimbra_move_mailboxes.sh"
+# echo "Please enter the minimum mbox size to move: "; read MINMBOXS
+# echo "Please enter the number of users to move: "; read NUSERMIG
+# echo "Please enter the destination mailbox server to move: "; read DSTSERV
+TEMPFILE='/tmp/.diskinfo_md.synacor.com.tmp'
+OUTPUTFILE='/tmp/diskinfo_md.synacor.com'
+touch $TEMPFILE
+rm $OUTPUTFILE
+SUSER='/usr/bin/sudo -u sysadmin'
+SSH='/usr/bin/ssh' 
+AKEY='-o StrictHostKeyChecking=no'
+HOSTNAME='/bin/hostname'
+DFOUT="df -h|egrep 'db|index|zimbra|fstore|store'"
+MBOX='/tmp/mailboxes'
+touch $MBOX
+
+# Function to get the list of servers
+listserver() {
+	# This will get the list of server with the available disk spaces. 
+	# Geting list of machine from source file
+	echo "Please enter the name of server having disk issue from the environment like md10.cableone.cmh.synacor.com, followed by [ENTER]:"
+	read env
+	$SUSER $SSH $AKEY $env '/usr/bin/sudo su - zimbra -c "zmprov -l gas mailbox"' > $MBOX
+
+	echo -n "Fetching data.."
+	# This will look all the servers for an environment for the space. 
+	for server in `cat $MBOX`
+		do 
+		echo -n "."
+		$SUSER $SSH $AKEY $server "$HOSTNAME;$DFOUT" >> $TEMPFILE 
+	done 
+
+	sed 's/.*dev.*// ; s/^ *// ; s/  */, /g ; /^$/d; s/^md/\nmd/' $TEMPFILE > $OUTPUTFILE # Alternative to the below line
+
+	# Remove temporary file 
+	rm $TEMPFILE
+	rm $MBOX
+
+	# Display the output file 
+	echo ""
+	echo "The disk details are available in $OUTPUTFILE"
+}
+
+
+# Function to call the zimbra_move_mailboxes.sh 
+startmove() {
+	# This will call the mboxmove script and start moving the user along with the logging results. 
+	# Checking the latest available quota file
+	QUOTAFILE=$(ls -t1 /var/tmp/*.quota* |  head -n 1)
+	/bin/sh $MBOXMOVE -m $MINMBOXS -n $NUSERMIG -f $QUOTAFILE -t $DSTSERV
+}
+
+# startmove 
+listserver
+	

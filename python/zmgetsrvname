@@ -1,0 +1,62 @@
+#!/usr/bin/python
+import subprocess
+import re
+import pwd
+import os
+def ldapsearch(ldap_search_filter,username):
+        '''
+        Performs an ldap search and returns a list server name
+        '''
+        # Fetch variables from localconfig (LC)
+        uid = pwd.getpwnam(username).pw_uid
+        gid = pwd.getpwnam(username).pw_gid
+        ldap_urls_LC = subprocess.Popen(['/opt/zimbra/bin/zmlocalconfig',
+                                        'ldap_url'],stdout=subprocess.PIPE,
+                                        preexec_fn=demote(uid, gid))
+        ldap_zmdn_LC = subprocess.Popen(['/opt/zimbra/bin/zmlocalconfig',
+                                        'zimbra_ldap_userdn'],
+                                        stdout=subprocess.PIPE,
+                                        preexec_fn=demote(uid, gid))
+        ldap_pass_LC = subprocess.Popen(['/opt/zimbra/bin/zmlocalconfig','-s',
+                                        'zimbra_ldap_password'],
+                                        stdout=subprocess.PIPE,
+                                        preexec_fn=demote(uid, gid))
+
+        #ldap_search = os.system("whereis ldapsearch")
+        ldap_search = subprocess.Popen(['whereis', 'ldapsearch'], stdout=subprocess.PIPE).stdout.read()
+        # Convert them to a useable string
+        ldap_hostname = ldap_urls_LC.stdout.read().split()[2]
+        zimbra_ldap_userdn = ldap_zmdn_LC.stdout.read().split()[2]
+        zimbra_ldap_password = ldap_pass_LC.stdout.read().split()[2]
+        ldapsearchcmd = ldap_search.strip().split()[1:][0]
+        print ldap_search, ldapsearchcmd
+        # Saving the output from ldap
+        ldap_dump = subprocess.Popen([ldapsearchcmd,
+                                    '-x', '-LLL', '-H', ldap_hostname,
+                                    '-D', zimbra_ldap_userdn,
+                                    '-w', zimbra_ldap_password,
+                                    ldap_search_filter,
+                                    'zimbraServiceHostname'],
+                                    stdout=subprocess.PIPE,
+                                    preexec_fn=demote(uid, gid)).stdout.read()
+
+        # grepping and extracting servernames from ldap dump
+        server_regex = re.compile(r'zimbraServiceHostname: (.*)')
+        server_ids = []
+        for line in ldap_dump.split('\n'):
+            if re.search('^zimbraServiceHostname:', line):
+                    server_ids.append(server_regex.search(line).group(1))
+        for line in server_ids:
+            print line
+
+def demote(user_uid, user_gid):
+        """Pass the function 'set_ids' to preexec_fn, rather than just calling
+        setuid and setgid. This will change the ids for that subprocess only"""
+        def set_ids():
+                os.setgid(user_gid)
+                os.setuid(user_uid)
+        return set_ids
+def main():
+        user="zimbra"
+        ldapsearch("(&(objectClass=zimbraServer)(zimbraServiceEnabled=mailbox))",user)
+main()

@@ -1,0 +1,37 @@
+#!/usr/bin/python
+
+# This script is to get the COS of all/specified user
+# For any issue please feel free to write to amitkumar.srivastava42@gmail.com
+
+# Importing the required module which we use in the script
+import subprocess
+import command
+import sys
+
+# Function to get all COS on the server
+
+def ldapsearch(ldap_search_filter):
+    '''
+    Performs an ldap search and returns a list of COS name and ID
+    '''
+    # Fetch variables from localconfig (LC)
+    ldap_urls_LC = subprocess.Popen(['zmlocalconfig', 'ldap_url'],
+                                    stdout=subprocess.PIPE)
+    ldap_zmdn_LC = subprocess.Popen(['zmlocalconfig', 'zimbra_ldap_userdn'],
+                                    stdout=subprocess.PIPE)
+    ldap_pass_LC = subprocess.Popen(['zmlocalconfig',
+                                     '-s', 'zimbra_ldap_password'],
+                                    stdout=subprocess.PIPE)
+
+    # Convert them to a useable string
+    ldap_hostname = ldap_urls_LC.stdout.read().split()[2]
+    zimbra_ldap_userdn = ldap_zmdn_LC.stdout.read().split()[2]
+    zimbra_ldap_password = ldap_pass_LC.stdout.read().split()[2]
+
+    # Saving the output from ldap
+    ldap_dump = subprocess.Popen(['ldapsearch', '-x', '-LLL',
+                                  '-H', ldap_hostname,
+                                  '-D', zimbra_ldap_userdn,
+                                  '-w', zimbra_ldap_password,
+                                  ldap_search_filter, 'zimbraCOSId'],
+                                 stdout=subprocess.PIPE).stdout.read()
